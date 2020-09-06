@@ -1,0 +1,144 @@
+import json
+import boto3
+import os
+
+def aws_connection(region, service):
+    client = boto3.client(region_name = region, service_name = service)
+    return client
+
+
+def parser_sqs_message(event):
+    dict_event_parsed = {}
+    try:
+        body = event["Records"][0]["body"]
+        body = body.replace("'", '"')
+        body_json = json.loads(body)
+
+        body_sqs = body_json["Records"][0]["s3"]
+
+        dict_event_parsed['Bucket'] = body_sqs["bucket"].get("name")
+        dict_event_parsed['Object'] = body_sqs["object"].get("key")
+
+        return dict_event_parsed
+    except Exception as e:
+        raise e
+
+
+def rekognition_detect_idcard(client, s3_dict_info):
+    bucket = s3_dict_info.get("Bucket")
+    image = s3_dict_info.get("Object")
+
+    try:
+        response = client.detect_labels(
+            Image={
+                'S3Object': {
+                    'Bucket': bucket,
+                    'Name': image
+                }
+            },
+            MinConfidence=80.0
+        )
+        return response
+    except Exception as e:
+        print(f"[Error] {e}")
+        raise e
+
+
+def check_if_idcard(rekognition_json):
+    labels = rekognition_json["Labels"]
+    idcard = False
+
+    for label in labels:
+        label_name = label['Name']
+        if "License" in label_name:
+            label_confidence = label['Confidence']
+            if float(label_confidence) > 80.0:
+                print(f"[INFO] Lable, label_confidence {label_name,label_confidence}")
+                idcard = True
+
+    return idcard
+
+def recognize_id_number(client, s3_dict_info):
+    bucket = s3_dict_info.get("Bucket")
+    image = s3_dict_info.get("Object")
+
+    try:
+        response = client.detect_text(
+            Image={
+                'S3Object': {
+                    'Bucket': bucket,
+                    'Name': image
+                }
+            }
+        )
+
+        textDetections=response['TextDetections']
+    
+        print ('Detected text Successfully\n----------')
+        for text in textDetections:
+            if len(text['DetectedText']) > 12 and text['Type']=='WORD':
+                print ('Detected text:' + text['DetectedText'])
+                print ('Confidence: ' + "{:.2f}".format(text['Confidence']) + "%")
+                # print ('Id: {}'.format(text['Id']))
+                ''' if 'ParentId' in text:
+                    print ('Parent Id: {}'.format(text['ParentId']))
+                print ('Type:' + text['Type']) '''
+                print()
+                
+                dynamodb = boto3.resource('dynamodb')
+
+                table = dynamodb.Table('aibook-idcard')
+                response = table.put_item(
+                   Item={
+                        'bucket': bucket,
+                        'key': image,
+                        'id_number': text['DetectedText']
+                    }
+                )
+        
+        return len(textDetections)
+
+    except Exception as e:
+        print(f"[Error] {e}")
+        raise e
+
+'''
+def send_message_sqs(client, message, sqs_url):
+    message = str(message)
+
+    response = client.send_message(
+            QueueUrl=sqs_url,
+            MessageBody=message
+    )
+    print(response)
+'''
+
+def lambda_handler(event, context):
+    rekognition_client = aws_connection("us-east-1", "rekognition")
+    sqs_client = aws_connection("us-east-1", "sqs")
+    # sqs_url = os.getenv("SQS_URL", "https://sqs.us-east-1.amazonaws.com/936068047509/rekognition_notify")
+
+    sqs_data_parsed = parser_sqs_message(event)
+    print (sqs_data_parsed)
+    
+    rekognition_json = rekognition_detect_idcard(rekognition_client, sqs_data_parsed)
+    is_idcard = check_if_idcard(rekognition_json)
+    
+    if is_idcard:
+        sqs_data_parsed['Success'] = "True"
+        print(f"[INFO] The image is a Id Cards {sqs_data_parsed}")
+        
+        print (sqs_data_parsed)
+        
+        text_count = recognize_id_number(rekognition_client, sqs_data_parsed)
+        print("Text detected: " + str(text_count))
+        
+        # send_message_sqs(sqs_client, sqs_data_parsed, sqs_url)
+        
+        return {
+            'statusCode': 200,
+            'body': sqs_data_parsed
+        }
+    
+    print("[INFO] The image is NOT a Id Cards")
+
