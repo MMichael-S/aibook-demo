@@ -8,7 +8,7 @@
     <ul class="navbar-nav">
         <ng-template #elseBlock>
             <li class="nav-item">
-                <a class="nav-link" [routerLink]="['/signin']">Signin</a>
+                <a class="nav-link" [routerLink]="['/signin']">登录</a>
             </li>
         </ng-template>
         <li class="nav-item dropdown" *ngIf="signedInUserName; else elseBlock">
@@ -16,8 +16,8 @@
                 {{signedInUserName}}
             </a>
             <div class="dropdown-menu">
-                <a class="dropdown-item" [routerLink]="['/terms']">Terms</a>
-                <a class="dropdown-item" [routerLink]="['/signout']">Sign out</a>
+                <a class="dropdown-item" [routerLink]="['/terms']">条款</a>
+                <a class="dropdown-item" [routerLink]="['/signout']">注销</a>
             </div>
         </li>
     </ul>
